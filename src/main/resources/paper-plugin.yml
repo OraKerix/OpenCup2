@@ -1,7 +1,7 @@
-name: Opencup2
+name: OpenCup
 version: '${version}'
 
-main: org.kerix.openhost.opencup.Main
+main: org.kerix.openhost.opencup.boostrap.Main
 bootstrapper: org.kerix.openhost.opencup.MainBootstrap
 loader: org.kerix.openhost.opencup.MainLoader
 api-version: '1.21.1'
@@ -10,4 +10,6 @@ load: POSTWORLD
 authors: [ Kerix ]
 
 permissions:
-  - opencup.admin
+  opencup.admin:
+    description: Grants access to OpenCup admin commands (/opencup start, skip, end, addpoints)
+    default: op

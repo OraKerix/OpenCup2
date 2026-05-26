@@ -267,5 +267,15 @@ public final class MinigameContextImpl implements MinigameContext {
 
     @Override public Random getRandom()            { return random; }
     @Override public long   getCurrentTick()       { return tickOrchestrator.getGlobalTick(); }
-    @Override public ProtocolManager getProtocolManager() { return protocolManager; }
+    @Override
+    public ProtocolManager getProtocolManager() {
+        if (protocolManager == null) {
+            throw new IllegalStateException(
+                    "[" + sessionId + "] getProtocolManager() called, but ProtocolLib is not installed. " +
+                            "Check your ctx.getProtocolManager() usage in the minigame."
+            );
+        }
+
+        return protocolManager;
+    }
 }

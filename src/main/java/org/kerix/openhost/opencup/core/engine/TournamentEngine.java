@@ -7,8 +7,10 @@ import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.kerix.openhost.opencup.api.arena.Arena;
+import org.kerix.openhost.opencup.api.minigame.EndReason;
 import org.kerix.openhost.opencup.api.minigame.Minigame;
-import org.kerix.openhost.opencup.api.minigame.MinigameDescriptor;
+import org.kerix.openhost.opencup.api.minigame.MinigameResult;
+import org.kerix.openhost.opencup.api.player.GamePlayer;
 import org.kerix.openhost.opencup.core.arena.ArenaManager;
 import org.kerix.openhost.opencup.core.context.MinigameContextImpl;
 import org.kerix.openhost.opencup.core.elimination.EliminationService;
@@ -21,6 +23,7 @@ import org.kerix.openhost.opencup.core.lifecycle.Stoppable;
 import org.kerix.openhost.opencup.core.registry.MinigameRegistry;
 import org.kerix.openhost.opencup.core.scoring.ScoringService;
 import org.kerix.openhost.opencup.core.session.PlayerSessionManager;
+import org.kerix.openhost.opencup.core.team.TeamManager;
 import org.kerix.openhost.opencup.core.tick.TickOrchestrator;
 import org.kerix.openhost.opencup.core.timer.TimerService;
 import org.kerix.openhost.opencup.core.tournament.TournamentConfig;
@@ -33,15 +36,16 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.logging.Logger;
 
+
 /**
  * Orchestrates the full tournament lifecycle.
  *
  * The only class that knows the game sequence. Minigames do not know they
- * are in a tournament. They finish and return a MinigameResult. This engine
- * applies points, advances the schedule, and launches the next game.
+ * are in a tournament — they finish and return a MinigameResult. This engine
+ * awards tournament points, advances the schedule, and launches the next game.
  *
  * State lives in TournamentState (mutable) and TournamentConfig (immutable).
- * Commands call startTournament() / skipCurrentGame() / endTournament().
+ * Admin commands call startTournament() / skipCurrentGame() / endTournament().
  */
 public final class TournamentEngine implements Startable, Stoppable {
 
@@ -54,7 +58,7 @@ public final class TournamentEngine implements Startable, Stoppable {
     private final TimerService timerService;
     private final TickOrchestrator tickOrchestrator;
     private final ScoreboardManager scoreboardManager;
-    private final ProtocolManager protocolManager;
+    private final @Nullable ProtocolManager protocolManager;
     private final JavaPlugin plugin;
     private final Logger log;
 
@@ -66,7 +70,8 @@ public final class TournamentEngine implements Startable, Stoppable {
             ArenaManager arenaManager, ScoringService scoring,
             PlayerSessionManager sessionManager, GameEventBus eventBus,
             TimerService timerService, TickOrchestrator tickOrchestrator,
-            ScoreboardManager scoreboardManager, ProtocolManager protocolManager,
+            ScoreboardManager scoreboardManager,
+            @Nullable ProtocolManager protocolManager,
             JavaPlugin plugin, Logger log
     ) {
         this.config            = config;
@@ -83,16 +88,27 @@ public final class TournamentEngine implements Startable, Stoppable {
         this.log               = log;
     }
 
+    // ── Startable / Stoppable ─────────────────────────────────────────────────
+
     @Override
     public void start() {
+        // Subscribe to MinigameEndedEvent so we can advance the tournament when
+        // a game finishes. This is the only event this class cares about.
         eventBus.subscribe(MinigameEndedEvent.class, this::onMinigameEnded);
+    }
+
+    @Override
+    public void stop() {
+        if (activeSession != null && !activeSession.isEnded()) {
+            skipCurrentGame();
+        }
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
 
     public void startTournament() {
         if (state != null && state.isInProgress()) {
-            log.warning("[Tournament] Already in progress. Ignoring startTournament().");
+            log.warning("[Tournament] Already in progress — ignoring startTournament().");
             return;
         }
         state = new TournamentState(config);
@@ -109,13 +125,11 @@ public final class TournamentEngine implements Startable, Stoppable {
     public void skipCurrentGame() {
         if (activeSession == null || activeSession.isEnded()) return;
         log.info("[Tournament] Admin skipped current game.");
-        // Force-end with a synthetic result (last-to-remaining ranking)
         activeSession.forceEnd(
-                org.kerix.openhost.opencup.api.minigame.MinigameResult
-                        .builder(activeSession.getId(), "skipped")
-                        .reason(org.kerix.openhost.opencup.api.minigame.EndReason.FORCE_ENDED)
+                MinigameResult.builder(activeSession.getId(), "skipped")
+                        .reason(EndReason.FORCE_ENDED)
                         .rankedPlayers(activeSession.getPlayers().stream()
-                                .map(org.kerix.openhost.opencup.api.player.GamePlayer::getUuid)
+                                .map(GamePlayer::getUuid)
                                 .toList())
                         .build()
         );
@@ -123,21 +137,21 @@ public final class TournamentEngine implements Startable, Stoppable {
 
     public void endTournament() {
         if (state == null) return;
-        if (activeSession != null && !activeSession.isEnded()) {
-            skipCurrentGame();
-        }
+        if (activeSession != null && !activeSession.isEnded()) skipCurrentGame();
         finishTournament();
     }
 
-    public boolean isRunning()       { return state != null && state.isInProgress(); }
-    public boolean hasActiveGame()   { return activeSession != null && !activeSession.isEnded(); }
+    public boolean isRunning()     { return state != null && state.isInProgress(); }
+    public boolean hasActiveGame() { return activeSession != null && !activeSession.isEnded(); }
 
     public @Nullable GameSession getActiveSession() { return activeSession; }
 
     public Component getStatusComponent() {
-        if (state == null) return Component.text("No tournament running", NamedTextColor.RED);
+        if (state == null)
+            return Component.text("No tournament running.", NamedTextColor.RED);
         TournamentEntry current = state.current();
-        if (current == null) return Component.text("Tournament finished!", NamedTextColor.GREEN);
+        if (current == null)
+            return Component.text("Tournament finished!", NamedTextColor.GREEN);
         return Component.text(
                 "Game " + (state.getCurrentIndex() + 1) + "/" + state.getTotalGames()
                         + ": " + current.minigameId()
@@ -155,53 +169,55 @@ public final class TournamentEngine implements Startable, Stoppable {
         log.info("[Tournament] Launching game " + (state.getCurrentIndex() + 1)
                 + "/" + state.getTotalGames() + ": " + entry.minigameId());
 
-        Minigame minigame      = minigameRegistry.instantiate(entry.minigameId());
-        MinigameDescriptor desc = minigameRegistry.getDescriptor(entry.minigameId());
-        Arena arena            = arenaManager.checkout(entry.arenaId());
+        Minigame minigame = minigameRegistry.instantiate(entry.minigameId());
+        Arena    arena    = arenaManager.checkout(entry.arenaId());
+        String   sessionId = entry.minigameId() + ":" + System.currentTimeMillis();
 
-        String sessionId = entry.minigameId() + ":" + System.currentTimeMillis();
+        // ── Shared player list ────────────────────────────────────────────────
+        // Both MinigameContextImpl and GameSession receive this exact reference.
+        // GameSession.open() populates it; context methods read from it.
+        // This is the fix for ctx.getParticipants() returning empty.
+        List<GamePlayer> sharedPlayers = new ArrayList<>();
 
-        GameStateMachine fsm   = new GameStateMachine(sessionId, eventBus, log);
+        // ── Per-session services ──────────────────────────────────────────────
+        GameStateMachine   fsm  = new GameStateMachine(sessionId, eventBus, log);
         EliminationService elim = new EliminationService(sessionId, sessionManager, eventBus);
-        org.kerix.openhost.opencup.core.team.TeamManager teams =
-                new org.kerix.openhost.opencup.core.team.TeamManager(sessionId, eventBus, log);
+        TeamManager teams = new TeamManager(sessionId, eventBus, log);
 
-        // We need a forward reference to the session for the context.
-        // Use a holder so both can reference each other.
-        GameSession[] sessionHolder = new GameSession[1];
-
+        // Context is constructed first (session is null initially — injected below)
         MinigameContextImpl context = new MinigameContextImpl(
-                sessionId, arena, List.of(),  // players added during open()
-                fsm, null,                    // session injected below
+                sessionId, arena, sharedPlayers,   // ← shared mutable list
+                fsm, null,                          // session injected after construction
                 timerService, elim, teams, scoreboardManager,
                 protocolManager, plugin, tickOrchestrator, log,
                 System.nanoTime()
         );
 
+        // Session also receives the same list reference
         GameSession session = new GameSession(
                 sessionId, minigame, entry, context, elim,
                 fsm, eventBus, timerService, arenaManager, sessionManager,
-                scoreboardManager, tickOrchestrator
+                scoreboardManager, tickOrchestrator,
+                sharedPlayers                       // ← same reference
         );
-        sessionHolder[0] = session;
 
-        // Re-inject context with the real session reference via reflection helper
+        // Close the circular dependency: context now knows its session
         context.injectSession(session);
 
         activeSession = session;
-        session.open(participants);
+        session.open(participants);   // populates sharedPlayers from initialPlayers
 
         eventBus.publish(new TournamentAdvancedEvent(
                 state.getCurrentIndex(), state.getTotalGames(), entry.minigameId()));
 
-        // Short delay then start countdown
+        // Short delay (2 seconds) before countdown so players can read the title
         timerService.createDelay(sessionId, 40L, session::startCountdown);
     }
 
     private void onMinigameEnded(MinigameEndedEvent event) {
         if (activeSession == null || !event.sessionId().equals(activeSession.getId())) return;
 
-        // Apply tournament points
+        // Award tournament points using the entry's scoring table
         TournamentEntry entry = state.current();
         if (entry != null) {
             scoring.applyTournamentPoints(event.result(), entry.scoringTable());
@@ -215,20 +231,18 @@ public final class TournamentEngine implements Startable, Stoppable {
             return;
         }
 
-        // Brief pause between games then launch next
+        // Post-game delay then launch the next game
         List<Player> participants = new ArrayList<>(Bukkit.getOnlinePlayers());
-        Bukkit.getScheduler().runTaskLater(plugin, () -> launchNext(participants),
+        Bukkit.getScheduler().runTaskLater(plugin,
+                () -> launchNext(participants),
                 config.getPostGameDelayTicks());
     }
 
     private void finishTournament() {
         log.info("[Tournament] " + config.getName() + " has ended.");
         Bukkit.broadcast(Component.text(
-                "§6§lTournament over! Thanks for playing " + config.getName() + "!"));
+                "§6§lOpenCup — Tournament complete! Thanks for playing!",
+                NamedTextColor.GOLD));
         eventBus.publish(new TournamentEndedEvent(scoring.getLeaderboard()));
-    }
-
-    @Override public void stop() {
-        if (activeSession != null && !activeSession.isEnded()) skipCurrentGame();
     }
 }

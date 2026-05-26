@@ -7,6 +7,7 @@ import org.kerix.openhost.opencup.api.minigame.Minigame;
 import org.kerix.openhost.opencup.api.minigame.MinigameResult;
 import org.kerix.openhost.opencup.api.phase.GamePhase;
 import org.kerix.openhost.opencup.api.player.GamePlayer;
+import org.kerix.openhost.opencup.api.player.PlayerRole;
 import org.kerix.openhost.opencup.core.arena.ArenaManager;
 import org.kerix.openhost.opencup.core.context.MinigameContextImpl;
 import org.kerix.openhost.opencup.core.elimination.EliminationService;
@@ -20,7 +21,10 @@ import org.kerix.openhost.opencup.core.timer.TimerService;
 import org.kerix.openhost.opencup.core.tournament.TournamentEntry;
 import org.kerix.openhost.opencup.core.ui.ScoreboardManager;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.UUID;
 
 /**
  * The frame around one minigame execution.
@@ -29,7 +33,11 @@ import java.util.*;
  * dependencies for that session. Drives the minigame through every
  * lifecycle phase by calling its hooks in the correct order.
  * <p>
- * The minigame is the brain; GameSession is the skeleton it runs inside.
+ * IMPORTANT — shared player list:
+ * The players list is created by TournamentEngine and passed to BOTH
+ * MinigameContextImpl and GameSession. They hold the same reference.
+ * GameSession.open() populates it; MinigameContextImpl reads from it.
+ * This is the only way ctx.getParticipants() returns the real players.
  */
 public final class GameSession implements Tickable {
 
@@ -47,18 +55,22 @@ public final class GameSession implements Tickable {
     private final ScoreboardManager scoreboardManager;
     private final TickOrchestrator tickOrchestrator;
 
-    private final List<GamePlayer> players = new ArrayList<>();
-    @Getter
-    private int roundsPlayed = 0;
-    @Getter
-    private boolean ended = false;
+    /**
+     * Shared with MinigameContextImpl — both hold this exact reference.
+     * Populated in open(); never reassigned.
+     */
+    private final List<GamePlayer> players;
+
+    @Getter private int roundsPlayed = 0;
+    @Getter private boolean ended = false;
 
     public GameSession(
             String id, Minigame minigame, TournamentEntry config,
             MinigameContextImpl context, EliminationService elimination,
             GameStateMachine fsm, GameEventBus eventBus, TimerService timerService,
             ArenaManager arenaManager, PlayerSessionManager sessionManager,
-            ScoreboardManager scoreboardManager, TickOrchestrator tickOrchestrator
+            ScoreboardManager scoreboardManager, TickOrchestrator tickOrchestrator,
+            List<GamePlayer> sharedPlayerList
     ) {
         this.id               = id;
         this.minigame         = minigame;
@@ -72,18 +84,23 @@ public final class GameSession implements Tickable {
         this.sessionManager   = sessionManager;
         this.scoreboardManager = scoreboardManager;
         this.tickOrchestrator = tickOrchestrator;
+        this.players          = sharedPlayerList; // shared reference — not a copy
     }
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
-    /** Open the lobby. Transitions FSM to WAITING and fires onLoad + onWaiting. */
+    /**
+     * Open the lobby. Enroll players into the shared list, transition FSM to
+     * WAITING, and fire onLoad + onWaiting on the minigame.
+     */
     public void open(List<Player> initialPlayers) {
-        // Enroll players
         for (Player p : initialPlayers) {
-            GamePlayer gp = sessionManager.enroll(p, id,
-                    org.kerix.openhost.opencup.api.player.PlayerRole.PARTICIPANT).gamePlayer();
+            // Enroll writes into PlayerSessionManager and returns the GamePlayer.
+            // We add it to the shared list so MinigameContextImpl sees it immediately.
+            GamePlayer gp = sessionManager.enroll(p, id, PlayerRole.PARTICIPANT).gamePlayer();
             players.add(gp);
         }
+
         scoreboardManager.registerSession(id, players);
         tickOrchestrator.register(this);
 
@@ -111,18 +128,20 @@ public final class GameSession implements Tickable {
         elimination.reset();
         fsm.transition(GamePhase.PLAYING);
 
-        // Start the global timeout timer
-        timerService.createCountdown(id, config.timeoutSeconds(), new org.kerix.openhost.opencup.api.timer.TimerCallback() {
-            @Override public void onFinish() {
-                if (fsm.is(GamePhase.PLAYING)) handleRoundEnd(null, EndReason.TIMEOUT);
-            }
-        });
+        // Global session timeout — force-ends the round if no winner is found in time
+        timerService.createCountdown(id, config.timeoutSeconds(),
+                new org.kerix.openhost.opencup.api.timer.TimerCallback() {
+                    @Override public void onFinish() {
+                        if (fsm.is(GamePhase.PLAYING)) handleRoundEnd(null, EndReason.TIMEOUT);
+                    }
+                });
 
         minigame.onStart();
     }
 
-    // ── Round management (called by MinigameContextImpl) ──────────────────────
+    // ── Round management ──────────────────────────────────────────────────────
 
+    /** Called by MinigameContextImpl when declareWinner / declareDraw fires. */
     public void handleRoundEnd(UUID winnerUuid, EndReason reason) {
         if (!fsm.isIn(GamePhase.PLAYING)) return;
         fsm.transition(GamePhase.ROUND_END);
@@ -137,9 +156,10 @@ public final class GameSession implements Tickable {
                 && reason != EndReason.INSUFFICIENT_PLAYERS;
 
         if (moreRounds) {
-            timerService.createDelay(id, config().roundResetDelayTicks(), () -> {
+            timerService.createDelay(id, config.roundResetDelayTicks(), () -> {
+                // Restore all players to participant role for the next round
                 players.forEach(gp -> {
-                    gp.setRole(org.kerix.openhost.opencup.api.player.PlayerRole.PARTICIPANT);
+                    gp.setRole(PlayerRole.PARTICIPANT);
                     gp.setEliminationRank(0);
                 });
                 elimination.reset();
@@ -152,8 +172,7 @@ public final class GameSession implements Tickable {
         }
     }
 
-    private TournamentEntry config() { return config; }
-
+    /** Called by MinigameContextImpl when endGame(result) fires. */
     public void forceEnd(MinigameResult result) {
         if (ended) return;
         teardown(result);
@@ -161,6 +180,7 @@ public final class GameSession implements Tickable {
 
     private void proceedToPostGame(EndReason reason) {
         if (ended) return;
+        // Brief pause (3 seconds) before calling onEnd so the minigame can display results
         timerService.createDelay(id, 60L, () -> {
             MinigameResult result = minigame.onEnd(reason);
             teardown(result);
@@ -185,23 +205,14 @@ public final class GameSession implements Tickable {
         eventBus.publish(new MinigameEndedEvent(id, result));
     }
 
-    // ── Player hooks (called by MinigameContextImpl) ──────────────────────────
+    // ── Player lifecycle hooks ────────────────────────────────────────────────
 
+    /** Called by MinigameContextImpl after eliminate() succeeds. */
     public void notifyEliminated(GamePlayer player) {
         minigame.onPlayerEliminated(player);
     }
 
-    // ── Tickable ──────────────────────────────────────────────────────────────
-
-    @Override
-    public void tick(long globalTick) {
-        if (fsm.is(GamePhase.PLAYING)) {
-            minigame.onTick(globalTick);
-        }
-    }
-
-    // ── Player management ─────────────────────────────────────────────────────
-
+    /** Called by FrameworkListener when a player disconnects mid-game. */
     public void handlePlayerDisconnect(UUID uuid) {
         players.stream()
                 .filter(gp -> gp.getUuid().equals(uuid))
@@ -216,9 +227,17 @@ public final class GameSession implements Tickable {
                 });
     }
 
+    // ── Tickable ──────────────────────────────────────────────────────────────
+
+    @Override
+    public void tick(long globalTick) {
+        if (fsm.is(GamePhase.PLAYING)) {
+            minigame.onTick(globalTick);
+        }
+    }
+
     // ── Accessors ─────────────────────────────────────────────────────────────
 
-    public GamePhase         getPhase()       { return fsm.current(); }
-    public List<GamePlayer>  getPlayers()     { return Collections.unmodifiableList(players); }
-
+    public GamePhase        getPhase()   { return fsm.current(); }
+    public List<GamePlayer> getPlayers() { return Collections.unmodifiableList(players); }
 }

@@ -27,7 +27,12 @@ public final class TournamentConfigLoader {
     }
 
     public TournamentSchema load() throws ConfigurationException {
-        plugin.saveDefaultConfig();  // saves tournament.yml if absent
+        plugin.getDataFolder().mkdirs();
+
+        if (!new java.io.File(plugin.getDataFolder(), "tournament.yml").exists()) {
+            plugin.saveResource("tournament.yml", false);
+        }
+
         File file = new File(plugin.getDataFolder(), "tournament.yml");
         if (!file.exists()) {
             throw new ConfigurationException("tournament.yml not found in " + plugin.getDataFolder());
