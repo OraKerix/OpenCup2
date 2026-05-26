@@ -1,0 +1,13 @@
+name: Opencup2
+version: '${version}'
+
+main: org.kerix.openhost.opencup.Main
+bootstrapper: org.kerix.openhost.opencup.MainBootstrap
+loader: org.kerix.openhost.opencup.MainLoader
+api-version: '1.21.1'
+load: POSTWORLD
+
+authors: [ Kerix ]
+
+permissions:
+  - opencup.admin
