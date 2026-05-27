@@ -113,17 +113,34 @@ public final class MinigameContextImpl implements MinigameContext {
             log.warning("[Context:" + sessionId + "] eliminate() called outside PLAYING phase — ignored.");
             return;
         }
-        elimination.eliminate(player, reason);
 
-        // Notify the minigame hook via session (session calls minigame.onPlayerEliminated)
+        Optional<Team> eliminatedTeam =
+                elimination.eliminate(player, reason);
+
         session.notifyEliminated(player);
 
-        // Check if only one player remains — trigger automatic round end
-        if (elimination.getAliveCount(players) <= 1) {
-            List<GamePlayer> remaining = getAlivePlayers();
-            if (remaining.isEmpty()) declareDraw();
-            else declareWinner(remaining.getFirst());
+        eliminatedTeam.ifPresent(team -> session.notifyTeamEliminated(team));
+
+        if (teamManager.isTeamGame()) {
+            checkTeamAutoEnd();
+        } else {
+            checkSoloAutoEnd();
         }
+    }
+
+    private void checkSoloAutoEnd() {
+        int alive = elimination.getAliveCount(players);
+        if (alive > 1) return;
+        List<GamePlayer> remaining = getAlivePlayers();
+        if (remaining.isEmpty()) declareDraw();
+        else declareWinner(remaining.getFirst());
+    }
+
+    private void checkTeamAutoEnd() {
+        List<org.kerix.openhost.opencup.api.team.Team> alive = teamManager.getAliveTeams();
+        if (alive.size() > 1) return;
+        if (alive.isEmpty()) declareDraw();
+        else declareWinner(alive.getFirst());
     }
 
     // ── In-game scoring ───────────────────────────────────────────────────────
@@ -158,13 +175,10 @@ public final class MinigameContextImpl implements MinigameContext {
         session.handleRoundEnd(winner.getUuid(), EndReason.WINNER);
     }
 
-    @Override
     public void declareWinner(Team winningTeam) {
         if (!fsm.isIn(GamePhase.PLAYING)) return;
-        // Use the member with the most points as the nominal "winner UUID"
-        winningTeam.getMembers().stream()
-                .max(Comparator.comparingInt(GamePlayer::getSessionPoints))
-                .ifPresent(gp -> session.handleRoundEnd(gp.getUuid(), EndReason.WINNER));
+
+        session.handleTeamRoundEnd(winningTeam, EndReason.WINNER);
     }
 
     @Override
@@ -202,11 +216,30 @@ public final class MinigameContextImpl implements MinigameContext {
 
     @Override
     public Team createTeam(String name, TeamColor color, List<GamePlayer> members) {
-        return teamManager.createTeam(name, color, members);
+        Team team = teamManager.createTeam(name, color, members);
+
+        elimination.setTeamManager(teamManager);
+        return team;
     }
 
     @Override
     public List<Team> getTeams() { return teamManager.getTeams(); }
+
+    @Override
+    public List<Team> getAliveTeams() {
+        return teamManager.getAliveTeams();
+    }
+
+    @Override
+    public void eliminateTeam(Team team, String reason) {
+        new ArrayList<>(team.getAliveMembers())
+                .forEach(gp -> eliminate(gp, reason));
+    }
+
+    @Override
+    public Optional<Team> getTeamOf(GamePlayer player) {
+        return teamManager.getTeamOf(player.getUuid());
+    }
 
     // ── UI ────────────────────────────────────────────────────────────────────
 

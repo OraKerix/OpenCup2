@@ -39,11 +39,11 @@ import java.util.logging.Logger;
 
 /**
  * Orchestrates the full tournament lifecycle.
- *
+ * <p>
  * The only class that knows the game sequence. Minigames do not know they
  * are in a tournament — they finish and return a MinigameResult. This engine
  * awards tournament points, advances the schedule, and launches the next game.
- *
+ * <p>
  * State lives in TournamentState (mutable) and TournamentConfig (immutable).
  * Admin commands call startTournament() / skipCurrentGame() / endTournament().
  */
@@ -92,8 +92,7 @@ public final class TournamentEngine implements Startable, Stoppable {
 
     @Override
     public void start() {
-        // Subscribe to MinigameEndedEvent so we can advance the tournament when
-        // a game finishes. This is the only event this class cares about.
+
         eventBus.subscribe(MinigameEndedEvent.class, this::onMinigameEnded);
     }
 
@@ -111,6 +110,7 @@ public final class TournamentEngine implements Startable, Stoppable {
             log.warning("[Tournament] Already in progress — ignoring startTournament().");
             return;
         }
+        scoring.loadExistingStats();
         state = new TournamentState(config);
         state.start();
         log.info("[Tournament] Starting: " + config.getName()
@@ -173,10 +173,6 @@ public final class TournamentEngine implements Startable, Stoppable {
         Arena    arena    = arenaManager.checkout(entry.arenaId());
         String   sessionId = entry.minigameId() + ":" + System.currentTimeMillis();
 
-        // ── Shared player list ────────────────────────────────────────────────
-        // Both MinigameContextImpl and GameSession receive this exact reference.
-        // GameSession.open() populates it; context methods read from it.
-        // This is the fix for ctx.getParticipants() returning empty.
         List<GamePlayer> sharedPlayers = new ArrayList<>();
 
         // ── Per-session services ──────────────────────────────────────────────
@@ -198,19 +194,17 @@ public final class TournamentEngine implements Startable, Stoppable {
                 sessionId, minigame, entry, context, elim,
                 fsm, eventBus, timerService, arenaManager, sessionManager,
                 scoreboardManager, tickOrchestrator,
-                sharedPlayers                       // ← same reference
+                sharedPlayers
         );
 
-        // Close the circular dependency: context now knows its session
         context.injectSession(session);
 
         activeSession = session;
-        session.open(participants);   // populates sharedPlayers from initialPlayers
+        session.open(participants);
 
         eventBus.publish(new TournamentAdvancedEvent(
                 state.getCurrentIndex(), state.getTotalGames(), entry.minigameId()));
 
-        // Short delay (2 seconds) before countdown so players can read the title
         timerService.createDelay(sessionId, 40L, session::startCountdown);
     }
 

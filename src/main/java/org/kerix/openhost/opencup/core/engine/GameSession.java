@@ -8,6 +8,7 @@ import org.kerix.openhost.opencup.api.minigame.MinigameResult;
 import org.kerix.openhost.opencup.api.phase.GamePhase;
 import org.kerix.openhost.opencup.api.player.GamePlayer;
 import org.kerix.openhost.opencup.api.player.PlayerRole;
+import org.kerix.openhost.opencup.api.team.Team;
 import org.kerix.openhost.opencup.core.arena.ArenaManager;
 import org.kerix.openhost.opencup.core.context.MinigameContextImpl;
 import org.kerix.openhost.opencup.core.elimination.EliminationService;
@@ -21,7 +22,6 @@ import org.kerix.openhost.opencup.core.timer.TimerService;
 import org.kerix.openhost.opencup.core.tournament.TournamentEntry;
 import org.kerix.openhost.opencup.core.ui.ScoreboardManager;
 
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
@@ -207,24 +207,32 @@ public final class GameSession implements Tickable {
 
     // ── Player lifecycle hooks ────────────────────────────────────────────────
 
-    /** Called by MinigameContextImpl after eliminate() succeeds. */
+    /** Called by MinigameContextImpl after a player is eliminated. */
     public void notifyEliminated(GamePlayer player) {
         minigame.onPlayerEliminated(player);
     }
 
-    /** Called by FrameworkListener when a player disconnects mid-game. */
-    public void handlePlayerDisconnect(UUID uuid) {
-        players.stream()
-                .filter(gp -> gp.getUuid().equals(uuid))
-                .findFirst()
-                .ifPresent(gp -> {
-                    minigame.onPlayerLeave(gp);
-                    if (fsm.is(GamePhase.PLAYING)) {
-                        context.eliminate(gp, "disconnect");
-                    }
-                    sessionManager.discharge(uuid);
-                    players.remove(gp);
-                });
+    /**
+     * Called by MinigameContextImpl when an entire team's members are all
+     * eliminated. Fires the minigame's onTeamEliminated() hook.
+     */
+    public void notifyTeamEliminated(Team team) {
+        minigame.onTeamEliminated(team);
+    }
+
+    /**
+     * Called by MinigameContextImpl.declareWinner(Team).
+     * Passes the winning team through so the minigame's onEnd() can read
+     * which team won via ctx.getTeams() and build a proper TeamResult ranking.
+     * <p>
+     * We store it as a session field and pass it in the RoundEndedEvent so
+     * nothing is lost between declareWinner() and onEnd().
+     */
+    public void handleTeamRoundEnd(Team winningTeam, EndReason reason) {
+        if (!fsm.isIn(GamePhase.PLAYING)) return;
+
+        handleRoundEnd(winningTeam.getMembers().isEmpty() ? null
+                : winningTeam.getMembers().getFirst().getUuid(), reason);
     }
 
     // ── Tickable ──────────────────────────────────────────────────────────────

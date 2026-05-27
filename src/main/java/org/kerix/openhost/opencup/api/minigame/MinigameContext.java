@@ -38,6 +38,20 @@ public interface MinigameContext {
     List<GamePlayer> getAlivePlayers();
     List<GamePlayer> getSpectators();
     Optional<GamePlayer> getPlayer(UUID uuid);
+    /**
+     * Teams that still have at least one alive member.
+     */
+     List<Team> getAliveTeams();
+
+     /**
+      * Eliminate every alive member of this team at once.
+      */
+     void eliminateTeam(Team team, String reason);
+
+     /**
+      * Which team this player belongs to. Empty in solo games.
+      */
+     Optional<Team> getTeamOf(GamePlayer player);
 
     // ── Elimination ───────────────────────────────────────────────────────────
 

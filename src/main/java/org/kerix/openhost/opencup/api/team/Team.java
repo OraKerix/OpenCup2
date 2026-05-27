@@ -11,16 +11,25 @@ import java.util.UUID;
  * Destroyed automatically when the session ends.
  */
 public interface Team {
+
     String getId();
     String getName();
     TeamColor getColor();
+
+    /** All members — including eliminated ones. */
     List<GamePlayer> getMembers();
+
+    /** Members whose role is still PARTICIPANT (not eliminated/spectator). */
+    List<GamePlayer> getAliveMembers();
+
+    /** True if at least one member has not been eliminated. */
+    boolean hasAliveMembers();
+
     boolean hasMember(UUID uuid);
 
-    /** Sum of all member session points. */
+    /** Sum of all member session points (alive and eliminated). */
     int getTotalPoints();
 
-    /** Adds a member at runtime (e.g. rejoin, team rebalance). */
     void addMember(GamePlayer player);
     void removeMember(UUID uuid);
 }

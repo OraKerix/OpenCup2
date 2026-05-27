@@ -1,5 +1,6 @@
 package org.kerix.openhost.opencup.core.ui;
 
+import net.kyori.adventure.text.Component;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.scoreboard.*;
@@ -30,7 +31,7 @@ final class SidebarRenderer {
 
         Objective obj = board.getObjective(OBJECTIVE_NAME);
         if (obj == null) {
-            obj = board.registerNewObjective(OBJECTIVE_NAME, "dummy", TITLE);
+            obj = board.registerNewObjective(OBJECTIVE_NAME, Criteria.DUMMY, Component.text(TITLE));
             obj.setDisplaySlot(DisplaySlot.SIDEBAR);
         }
 

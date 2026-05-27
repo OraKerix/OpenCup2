@@ -66,7 +66,7 @@ public abstract class Minigame {
     /**
      * Called when the game ends for any reason.
      * MUST return a MinigameResult — the framework cannot award points without it.
-     *
+     * <p>
      * Use ctx().getRankedPlayers() as the base for your ranking if you use
      * the session points system, or build your own ordering for race-style games.
      */
@@ -81,6 +81,13 @@ public abstract class Minigame {
     protected void onPlayerJoin(GamePlayer player)       {}
     public void onPlayerLeave(GamePlayer player)      {}
     public void onPlayerEliminated(GamePlayer player) {}
+    /**
+     * Called when every member of a team has been eliminated.\
+     * The framework fires this automatically after the last member of the\
+     * team is eliminated via ctx.eliminate().\
+     * Override to play sounds, display titles, or trigger game logic.\
+     */
+    public void onTeamEliminated(Team team) {}
 
     // ── Protected helpers ─────────────────────────────────────────────────────
 

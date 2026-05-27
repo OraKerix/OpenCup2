@@ -116,7 +116,7 @@ public final class ServiceRegistry {
      * Services implementing Stoppable have stop() called; others are skipped.
      * Exceptions in one service's stop() are caught and logged — remaining
      * services always shut down.
-     *
+     * <p>
      * Called once by OpenCupPlugin.onDisable().
      */
     public void shutdownAll() {
