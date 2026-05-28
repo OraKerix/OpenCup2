@@ -75,6 +75,7 @@ public final class Main extends JavaPlugin {
         });
 
         // Minigame implementation registration must happen before tournament.yml validation.
+
         try {
             MinigameRegistry minigameRegistry = bootstrap.minigameRegistry();
 

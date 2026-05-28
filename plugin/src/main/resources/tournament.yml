@@ -17,6 +17,7 @@ tournament:
        1st:  10
        2nd: 7
        3rd: 5
+       kill: 7
        default: 1
   # ── Example entry — duplicate and modify for each game in your tournament ──
   #

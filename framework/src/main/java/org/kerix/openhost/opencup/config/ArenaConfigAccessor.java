@@ -16,12 +16,12 @@ import java.util.logging.Logger;
  * Reads every .yml file in plugins/OpenCup/arenas/ into ArenaSchema objects.
  * Each file = one arena. Filename stem is the arena ID.
  */
-public final class ArenaConfigLoader {
+public final class ArenaConfigAccessor {
 
     private final JavaPlugin plugin;
     private final Logger log;
 
-    public ArenaConfigLoader(JavaPlugin plugin) {
+    public ArenaConfigAccessor(JavaPlugin plugin) {
         this.plugin = plugin;
         this.log = plugin.getLogger();
     }
@@ -53,6 +53,20 @@ public final class ArenaConfigLoader {
     public ArenaSchema loadArena(File file) throws ConfigurationException {
         YamlConfiguration cfg = YamlConfiguration.loadConfiguration(file);
         return deserialize(cfg, file);
+    }
+
+    public boolean exists(String arenaId) {
+        File arenaDir = new File(plugin.getDataFolder(), "arenas");
+        File file = new File(arenaDir, arenaId + ".yml");
+        return file.exists();
+    }
+
+    public void saveArenaIfMissing(ArenaSchema arena) throws IOException {
+        if (exists(arena.id())) {
+            return;
+        }
+
+        saveArena(arena);
     }
 
     public void saveArena(ArenaSchema arena) throws IOException {

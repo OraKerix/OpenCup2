@@ -2,7 +2,7 @@ package org.kerix.openhost.opencup.core.arena;
 
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.plugin.java.JavaPlugin;
-import org.kerix.openhost.opencup.config.ArenaConfigLoader;
+import org.kerix.openhost.opencup.config.ArenaConfigAccessor;
 import org.kerix.openhost.opencup.config.schema.ArenaSchema;
 
 import java.io.File;
@@ -29,7 +29,7 @@ public final class ArenaAccessor {
     private void saveArena(ArenaSchema arena, File file) throws IOException {
         YamlConfiguration cfg = new YamlConfiguration();
 
-        ArenaConfigLoader.serialize(arena, cfg);
+        ArenaConfigAccessor.serialize(arena, cfg);
 
         File parent = file.getParentFile();
         if (parent != null) {

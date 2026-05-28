@@ -1,6 +1,9 @@
 package org.kerix.openhost.opencup.bootstrap;
 
 import org.bukkit.plugin.java.JavaPlugin;
+import org.kerix.openhost.opencup.config.ConfigurationException;
+import org.kerix.openhost.opencup.config.DefaultConfigProvisioner;
+import org.kerix.openhost.opencup.content.TournamentContentRegistry;
 import org.kerix.openhost.opencup.core.arena.ArenaAccessor;
 import org.kerix.openhost.opencup.core.event.GameEventBus;
 import org.kerix.openhost.opencup.core.scoring.ScoringService;
@@ -14,8 +17,8 @@ import org.kerix.openhost.opencup.persistence.impl.YamlTournamentRepository;
 import com.comphenix.protocol.ProtocolLibrary;
 import com.comphenix.protocol.ProtocolManager;
 import org.bukkit.Bukkit;
-import org.kerix.openhost.opencup.config.ArenaConfigLoader;
-import org.kerix.openhost.opencup.config.TournamentConfigLoader;
+import org.kerix.openhost.opencup.config.ArenaConfigAccessor;
+import org.kerix.openhost.opencup.config.TournamentConfigAccessor;
 import org.kerix.openhost.opencup.config.schema.ArenaSchema;
 import org.kerix.openhost.opencup.core.arena.ArenaManager;
 import org.kerix.openhost.opencup.core.engine.TournamentEngine;
@@ -26,6 +29,7 @@ import org.kerix.openhost.opencup.core.tick.TickOrchestrator;
 import org.kerix.openhost.opencup.core.tournament.TournamentConfig;
 import org.kerix.openhost.opencup.core.ui.ScoreboardManager;
 
+import java.io.IOException;
 import java.util.List;
 
 /**
@@ -90,13 +94,54 @@ public final class Bootstrap {
                         registry.get(GameEventBus.class),
                         plugin.getLogger()));
 
-        TournamentConfig tournamentConfig = new TournamentConfig(
-                new TournamentConfigLoader(plugin).load());
+        TournamentConfigAccessor tournamentConfigAccessor =
+                new TournamentConfigAccessor(plugin);
 
-        List<ArenaSchema> arenaSchemas =
-                new ArenaConfigLoader(plugin).loadAll();
+        ArenaConfigAccessor arenaConfigAccessor =
+                new ArenaConfigAccessor(plugin);
 
-        ArenaManager arenaManager = new ArenaManager(arenaSchemas, plugin.getLogger());
+        registry.bind(TournamentConfigAccessor.class, tournamentConfigAccessor);
+        registry.bind(ArenaConfigAccessor.class, arenaConfigAccessor);
+
+        TournamentContentRegistry minigameContentRegistry = new TournamentContentRegistry("OpenCup" , 60 , 200);
+
+        registry.bind(TournamentContentRegistry.class, minigameContentRegistry);
+
+        DefaultConfigProvisioner provisioner = new DefaultConfigProvisioner(
+                tournamentConfigAccessor,
+                arenaConfigAccessor,
+                plugin.getLogger()
+        );
+
+        registry.bind(DefaultConfigProvisioner.class, provisioner);
+
+        try {
+            provisioner.provision(
+                    minigameContentRegistry.tournamentSchema(),
+                    minigameContentRegistry.arenaSchemas()
+            );
+        }catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+
+        TournamentConfig tournamentConfig;
+
+        try {
+            tournamentConfig = new TournamentConfig(tournamentConfigAccessor.load());
+        } catch (ConfigurationException exception) {
+            throw new IllegalStateException(
+                    "Failed to load tournament.yml",
+                    exception
+            );
+        }
+
+        List<ArenaSchema> arenaSchemas = arenaConfigAccessor.loadAll();
+
+        ArenaManager arenaManager = new ArenaManager(
+                arenaSchemas,
+                plugin.getLogger()
+        );
+
         registry.bind(ArenaManager.class, arenaManager);
 
         this.minigameRegistry = new MinigameRegistry(plugin.getLogger());
@@ -111,12 +156,18 @@ public final class Bootstrap {
                         registry.get(LeaderboardService.class)));
 
         ProtocolManager protocolManager = null;
+
         if (Bukkit.getPluginManager().isPluginEnabled("ProtocolLib")) {
             protocolManager = ProtocolLibrary.getProtocolManager();
-            plugin.getLogger().info("[Bootstrap] ProtocolLib detected and bound.");
+
+            plugin.getLogger().info(
+                    "[Bootstrap] ProtocolLib detected and bound."
+            );
         } else {
-            plugin.getLogger().warning("[Bootstrap] ProtocolLib not found. " +
-                    "Minigames using ctx.getProtocolManager() will throw at runtime.");
+            plugin.getLogger().warning(
+                    "[Bootstrap] ProtocolLib not found. " +
+                            "Minigames using ctx.getProtocolManager() will throw at runtime."
+            );
         }
 
         registry.bind(TournamentEngine.class,
