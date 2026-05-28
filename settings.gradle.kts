@@ -1,1 +1,4 @@
-rootProject.name = "Opencup2"
+rootProject.name = "opencup"
+
+include("framework")
+include("plugin")

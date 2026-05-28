@@ -1,39 +1,22 @@
-plugins {
-    id("java-library")
-    alias(libs.plugins.run.paper)
-}
+subprojects {
+    apply(plugin = "java")
 
-repositories {
-    mavenCentral()
-    maven("https://repo.papermc.io/repository/maven-public/")
-}
+    group = "org.kerix.openhost"
+    version = "1.0"
 
-dependencies {
-    compileOnly(libs.paper.api)
-    compileOnly("net.dmulloy2:ProtocolLib:5.4.0")
-
-    compileOnly("org.projectlombok:lombok:1.18.32")
-    annotationProcessor("org.projectlombok:lombok:1.18.32")
-}
-
-tasks.withType<JavaCompile>().configureEach {
-    options.compilerArgs.add("-Xlint:-unused")
-}
-
-java {
-    toolchain.languageVersion = JavaLanguageVersion.of(21)
-}
-
-tasks {
-    runServer {
-        minecraftVersion(libs.versions.minecraft.get())
-        jvmArgs("-Xms2G", "-Xmx2G")
+    configure<JavaPluginExtension> {
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
     }
 
-    processResources {
-        val props = mapOf("version" to version)
-        filesMatching("paper-plugin.yml") {
-            expand(props)
-        }
+    tasks.withType<JavaCompile> {
+        options.encoding = "UTF-8"
+    }
+
+    repositories {
+        mavenCentral()
+        maven("https://repo.papermc.io/repository/maven-public/")
+        maven("https://repo.dmulloy2.net/repository/public/")
     }
 }
+

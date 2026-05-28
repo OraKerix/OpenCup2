@@ -1,0 +1,16 @@
+name: OpenCup
+version: '1.0'
+
+main: org.kerix.openhost.opencup.Main
+api-version: '1.21.1'
+load: POSTWORLD
+
+authors: [ Kerix ]
+
+softdepend:
+  - ProtocolLib
+
+permissions:
+  opencup.admin:
+    description: Grants access to OpenCup admin commands (/opencup start, skip, end, addpoints)
+    default: op
